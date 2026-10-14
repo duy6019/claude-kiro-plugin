@@ -1,19 +1,19 @@
 {
-  "name": "kiro-local",
+  "name": "claude-kiro-plugin",
   "owner": {
-    "name": "local"
+    "name": "duy6019"
   },
   "metadata": {
     "description": "Use Kiro from Claude Code: read-only questions, cross-review, spec writing.",
-    "version": "0.2.0"
+    "version": "0.2.1"
   },
   "plugins": [
     {
       "name": "kiro",
       "description": "Ask kiro-cli, cross-review a diff with it, and write Kiro specs.",
-      "version": "0.2.0",
+      "version": "0.2.1",
       "author": {
-        "name": "local"
+        "name": "duy6019"
       },
       "source": "./plugins/kiro"
     }
