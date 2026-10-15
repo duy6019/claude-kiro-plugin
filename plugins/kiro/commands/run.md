@@ -6,6 +6,8 @@ allowed-tools: Read, Write, Bash(mkdir -p:*), Bash(cp -r:*), Bash(git:*), Bash(p
 
 Drive Kiro through a spec. Kiro decides how to do each task and asks before every write and shell command; Claude answers those requests and judges the result. Kiro's global steering (ponytail) shapes how it works, so keep prompts short.
 
+**Stay quiet while it runs.** No chat text for starting a run, arming the Monitor, waiting, or a request you allowed. Speak only to ask the user, to report a rejection or a failed task, after each task (one line, step 11) and at the end (step 14). Decision reasons live in `done.json`, not in chat.
+
 Raw slash-command arguments:
 `$ARGUMENTS`
 
@@ -23,12 +25,12 @@ Scripts: `R="${CLAUDE_PLUGIN_ROOT}/scripts/kiro_acp.py"`, `C="${CLAUDE_PLUGIN_RO
 ## Per top-level task N
 
 7. **Scope.** From task N and `design.md`, list the files or directories you expect Kiro to write, plus `<spec dir>/tasks.md`. It is a prediction, not a fence: writes elsewhere inside `<dir>` are allowed and flagged for review.
-8. **Prompt.** Write `<work>/t<N>/prompt.txt`: "Implement task N of the Kiro spec in <spec dir>, <including / skipping> the [ ]* sub-tasks. Mark finished sub-tasks [x] in tasks.md." Add a line only for something a previous run showed: a specific problem, or the requests you rejected and why, inviting Kiro to explain if it still needs them.
+8. **Prompt.** Write `<work>/t<N>/prompt.txt`: "Implement task N of the Kiro spec in <spec dir>, <including / skipping> the [ ]* sub-tasks. Mark finished sub-tasks [x] in tasks.md. Change files with your write tool, not shell commands." Add a line only for something a previous run showed: a specific problem, or the requests you rejected and why, inviting Kiro to explain if it still needs them.
 9. **Run** with the Bash tool's `run_in_background`:
    `python3 $R --cwd <dir> --queue <work>/t<N> --prompt-file <work>/t<N>/prompt.txt --scope <paths> --allow-cmd <regexes> [--load <session>] > <work>/t<N>/runner.out 2>&1`
    From task 2 on, pass `--load` with the session id from the previous `done.json`, so Kiro keeps what it already read.
-10. **Answer what the runner hands you.** It allows writes inside `<dir>` (flagging those outside the predicted scope or overwriting a committed file), read-only git and the check commands; it rejects writes outside `<dir>`, history-changing or remote git, recursive or forced deletes, sudo and network tools. It asks you about overwriting uncommitted work and about any other command.
-    - Start a `Monitor` on `<work>/t<N>` that prints one line per new `req-<n>.json` (reason, target, purpose, `read_before`) and exits when `done.json` appears. Re-arm it if it expires first. A `done.json` with `error`, or a runner that exits without one, is a failed task. Unanswered requests are rejected after `--ask-timeout` (20 minutes by default).
+10. **Answer what the runner hands you.** It allows writes inside `<dir>` (flagging those outside the predicted scope or overwriting a committed file), read-only git and the check commands, also when piped or chained with `echo`, `tail`, `head`, `grep` or `wc`; it rejects writes outside `<dir>`, history-changing or remote git, recursive or forced deletes, sudo and network tools. It asks you about overwriting uncommitted work and about any other command.
+    - Start a `Monitor` with exactly `python3 $R --watch <work>/t<N>` (timeout 30 minutes). It prints `ASK <n>: reason | target | read_before | purpose` for each request waiting for you and ends with `DONE` or `ERROR`. Re-arm it if it expires first. `ERROR`, or a runner that exits without `done.json`, is a failed task. Unanswered requests are rejected after `--ask-timeout` (20 minutes by default).
     - Answer with `<work>/t<N>/resp-<n>.json`: `{"allow": true|false, "reason": "<one line>"}`. Decide like this:
       1. Judge against the task and the spec (requirement clauses, `design.md`) and Kiro's stated purpose, not your own preference. If the task needs the change, allow it, even when it breaks existing code or tests; fixing those belongs to the same task.
       2. When unsure, allow if the result can be recovered (the old content is committed, or the new content keeps the uncommitted part), and verify in the light check.
@@ -41,6 +43,7 @@ Scripts: `R="${CLAUDE_PLUGIN_ROOT}/scripts/kiro_acp.py"`, `C="${CLAUDE_PLUGIN_RO
     - `git -C <dir> diff`: grep removed lines for deleted test functions or cases (`func Test`, `def test_`, `it(`, `test(`).
     - Run the repo's check commands on the changed parts.
     - Anything wrong: run again with `--load` and a prompt naming the specific problem. At most two fix rounds, then stop and report.
+    - Then write one line: `Task N ✅|❌ <what changed, a few words> · checks <pass/fail> · <n> allowed, <n> flagged, <n> rejected · <Kiro's risk, if any>`.
 
 ## Checkpoint tasks: review the cluster
 
@@ -52,5 +55,5 @@ Scripts: `R="${CLAUDE_PLUGIN_ROOT}/scripts/kiro_acp.py"`, `C="${CLAUDE_PLUGIN_RO
 ## End
 
 13. Run the repo's full checks once more (with the race detector or equivalent if the repo uses one) and `python3 $C <spec dir>`.
-14. Report per task: files changed, checks, every flagged, asked or rejected permission and why (from `done.json`), fix rounds and Kiro's stated risks; then the checkpoint findings and what is not verified (for example tests that need Docker).
+14. Short report: the overall result in one line; one or two lines per task (what changed, fix rounds); only the flagged, asked or rejected permissions with their reason; checkpoint findings; what is not verified (for example tests that need Docker); the next step. Leave out allowed permissions and anything already said in the per-task lines.
 15. Do not commit, push or revert.

@@ -1,5 +1,8 @@
 #!/usr/bin/env python3
 """Self-test for the permission tiers in kiro_acp.py: python3 test_kiro_acp.py"""
+import contextlib
+import io
+import json
 import subprocess
 import sys
 import tempfile
@@ -7,7 +10,7 @@ import unittest
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
-from kiro_acp import classify, dirty_files  # noqa: E402
+from kiro_acp import classify, dirty_files, watch  # noqa: E402
 
 CHECKS = [r"go test \./[\w./-]* -timeout 300s", r"npm test"]
 
@@ -46,12 +49,26 @@ class Classify(unittest.TestCase):
             self.assertEqual(self.tier(command=c), "reject", c)
         self.assertEqual(self.tier(command="go test ./pkg/gh/... -timeout 300s"), "allow")  # 'gh' in a path is fine
         self.assertEqual(self.tier(command="rm pkg/x/tmp.txt"), "ask")
-        for c in ("go test ./pkg/x/... -timeout 300s && echo done", "git diff --output=x", "make generate",
-                  "go test ./... -timeout 900s"):
+        for c in ("go test ./pkg/x/... -timeout 300s 2>&1 | tail -20", "go test ./pkg/x/... -timeout 300s; echo EXIT",
+                  "npm test && git status --short", "go test ./pkg/x/... -timeout 300s | grep -v ok"):
+            self.assertEqual(self.tier(command=c), "allow", c)
+        for c in ("go test ./pkg/x/... -timeout 300s > out.txt", "echo $(cat x)", "git diff --output=x", "make generate",
+                  "go test ./... -timeout 900s", "go test ./pkg/x/... -timeout 300s | sh", "sed -i s/a/b/ tasks.md",
+                  "cd pkg && go test . -timeout 300s"):
             self.assertEqual(self.tier(command=c), "ask", c)
 
     def test_other_tools_ask(self):
         self.assertEqual(self.tier(url="https://example.com"), "ask")
+
+    def test_watch_lists_requests_then_done(self):
+        q = self.cwd / "q"
+        q.mkdir()
+        (q / "req-1.json").write_text(json.dumps({"n": 1, "reason": "r", "target": "t", "purpose": "p"}))
+        (q / "done.json").write_text(json.dumps({"session": "s1"}))
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            watch(q)
+        self.assertEqual(out.getvalue().splitlines(), ["ASK 1: r | t | read_before=None | p", "DONE session=s1"])
 
     def test_dirty_files(self):
         repo = self.cwd

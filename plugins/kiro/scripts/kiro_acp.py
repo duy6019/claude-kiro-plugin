@@ -28,7 +28,17 @@ GIT_READ = [r"git status( --short)?", r"git diff( --stat| --name-only)?( HEAD)?(
 DANGER_BIN = {"sudo", "curl", "wget", "scp", "ssh", "nc", "glab", "gh", "kubectl", "terraform", "docker", "helm"}
 DANGER_GIT = {"push", "commit", "reset", "checkout", "restore", "clean", "rebase", "stash", "merge", "cherry-pick",
               "tag", "am", "apply", "worktree"}
-SHELL_OPS = re.compile(r"[;&|`$<>\n]")
+SAFE_FILTERS = [r"echo( [^;&|`$<>]*)?", r"(tail|head)( -n ?[0-9]+| -[0-9]+)?", r"grep( -[A-Za-z]+)* \S+", r"wc( -[lwc])?"]
+
+
+def safe_pipeline(cmd, allow_cmd):
+    """Allowed commands joined by |, ;, && or ||, plus output filters (echo, tail, head, grep, wc).
+    Redirection, subshells and anything else still go to Claude."""
+    cmd = cmd.replace(" 2>&1", "")
+    if re.search(r"[`$<>\n]", cmd):
+        return False
+    parts = [p.strip() for p in re.split(r"\|\||&&|[|;]", cmd)]
+    return all(p and any(re.fullmatch(r, p) for r in GIT_READ + allow_cmd + SAFE_FILTERS) for p in parts)
 
 
 def dangerous(cmd):
@@ -80,7 +90,7 @@ def classify(raw, cwd, scope, allow_cmd, dirty=frozenset()):
     if cmd:
         if dangerous(cmd):
             return "reject", "command changes history, deletes, escalates or reaches the network"
-        if not SHELL_OPS.search(cmd) and any(re.fullmatch(r, cmd) for r in GIT_READ + allow_cmd):
+        if safe_pipeline(cmd, allow_cmd):
             return "allow", "allowed command"
         return "ask", "command not in the allow list"
     return "ask", "tool other than write or shell"
@@ -114,7 +124,26 @@ def paths_in(obj):
             yield from paths_in(v)
 
 
+def watch(queue):
+    """For a Monitor: one line per request waiting for Claude, then DONE or ERROR once done.json exists."""
+    queue, seen, tick = Path(queue), set(), threading.Event()
+    while True:
+        for req in sorted(queue.glob("req-*.json")):
+            if req.name not in seen:
+                seen.add(req.name)
+                r = json.loads(req.read_text())
+                print(f"ASK {r['n']}: {r['reason']} | {r['target']} | read_before={r.get('read_before')} | {r.get('purpose')}", flush=True)
+        done = queue / "done.json"
+        if done.exists():
+            d = json.loads(done.read_text())
+            print(f"ERROR {d['error']}" if d.get("error") else f"DONE session={d['session']}", flush=True)
+            return
+        tick.wait(1)
+
+
 def main():
+    if sys.argv[1:2] == ["--watch"]:
+        return watch(sys.argv[2])
     ap = argparse.ArgumentParser()
     ap.add_argument("--cwd", required=True); ap.add_argument("--queue", required=True)
     ap.add_argument("--prompt-file", required=True); ap.add_argument("--load")
