@@ -57,6 +57,17 @@ class Classify(unittest.TestCase):
                   "cd pkg && go test . -timeout 300s"):
             self.assertEqual(self.tier(command=c), "ask", c)
 
+    def test_go_preset_from_run_md(self):
+        go = [r"go test( \S+)* -timeout (300|[12][0-9]{2}|[1-9][0-9]?)s( \S+)*", r"go vet( \S+)+"]
+        tier = lambda c: classify({"command": c}, self.cwd, self.scope, go)[0]  # noqa: E731
+        for c in ("go test -race -timeout 300s -run 'TestA|TestB' ./modules/enforcement/offtrip/... 2>&1 | tail -40",
+                  "go test ./... -timeout 120s -count=1", "go vet ./... && echo ok"):
+            self.assertEqual(tier(c), "allow", c)
+        for c in ("go test ./... -timeout 600s", "go test ./...", "go test 'unbalanced ./..."):
+            self.assertEqual(tier(c), "ask", c)
+        for c in ("go test -exec sh -timeout 300s ./...", "go test -toolexec=x -timeout 300s ./..."):
+            self.assertEqual(tier(c), "reject", c)
+
     def test_other_tools_ask(self):
         self.assertEqual(self.tier(url="https://example.com"), "ask")
 

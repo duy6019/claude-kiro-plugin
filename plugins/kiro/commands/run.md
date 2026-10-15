@@ -6,7 +6,7 @@ allowed-tools: Read, Write, Bash(mkdir -p:*), Bash(cp -r:*), Bash(git:*), Bash(p
 
 Drive Kiro through a spec. Kiro decides how to do each task and asks before every write and shell command; Claude answers those requests and judges the result. Kiro's global steering (ponytail) shapes how it works, so keep prompts short.
 
-**Stay quiet while it runs.** No chat text for starting a run, arming the Monitor, waiting, or a request you allowed. Speak only to ask the user, to report a rejection or a failed task, after each task (one line, step 11) and at the end (step 14). Decision reasons live in `done.json`, not in chat.
+**Stay quiet while it runs.** No chat text for starting a run, arming the Monitor, waiting, or a request you allowed. Speak only to ask the user, to report a rejection or a failed task, after each task (one line, step 11) and at the end (step 14). Decision reasons live in `done.json`, not in chat. After writing a `resp-<n>.json` that allows, end the turn with no text.
 
 Raw slash-command arguments:
 `$ARGUMENTS`
@@ -18,7 +18,7 @@ Scripts: `R="${CLAUDE_PLUGIN_ROOT}/scripts/kiro_acp.py"`, `C="${CLAUDE_PLUGIN_RO
 1. **Working directory.** `<dir>` is where Kiro works. Choosing or creating it (checkout or worktree) follows your normal workflow and the workspace `CLAUDE.md`; this command does not do it. If `<dir>` lacks the spec (for example it is uncommitted in another checkout), copy it in: `mkdir -p <dir>/.kiro/specs && cp -r <source>/.kiro/specs/<spec name> <dir>/.kiro/specs/`, and ignore that copy in the file checks.
 2. `<spec dir>` is `<dir>/.kiro/specs/<spec name>`. Run `python3 $C <spec dir>`; stop on errors.
 3. Ask the user once whether Kiro should also do the optional `[ ]*` test sub-tasks.
-4. **Check commands.** Find how this repo builds, lints and tests (Makefile, CI config, package.json, pyproject, go.mod, README). Turn them into full-match regexes for `--allow-cmd`, for example `go test \./[\w./-]* -timeout 300s` or `npm test`. Follow the workspace rules (in the fraud repos every `go test` carries `-timeout` ≤ 300s).
+4. **Check commands.** Find how this repo builds, lints and tests (Makefile, CI config, package.json, pyproject, go.mod, README). Turn them into full-match (Python) regexes for `--allow-cmd` that accept flags in any order; commands are matched after quotes are removed and pipes split off. For Go: `'go test( \S+)* -timeout (300|[12][0-9]{2}|[1-9][0-9]?)s( \S+)*'` and `'go vet( \S+)+'`; for npm: `'npm (run )?test( \S+)*'`. Follow the workspace rules (in the fraud repos every `go test` carries `-timeout` ≤ 300s).
 5. Work files go to `reviews/_work/kiro-<spec>/` in this workspace if `reviews/_work` exists, otherwise to a `mktemp -d` directory. Never into `<dir>`.
 6. Tasks to run: the given numbers, or every top-level task not marked `[x]`, in order.
 

@@ -17,6 +17,7 @@ import argparse
 import fnmatch
 import json
 import re
+import shlex
 import subprocess
 import sys
 import threading
@@ -31,13 +32,29 @@ DANGER_GIT = {"push", "commit", "reset", "checkout", "restore", "clean", "rebase
 SAFE_FILTERS = [r"echo( [^;&|`$<>]*)?", r"(tail|head)( -n ?[0-9]+| -[0-9]+)?", r"grep( -[A-Za-z]+)* \S+", r"wc( -[lwc])?"]
 
 
+def segments(cmd):
+    """Split a command line on unquoted |, ;, && and ||; quotes are honoured (go test -run 'A|B')."""
+    lex = shlex.shlex(cmd, posix=True, punctuation_chars="|;&")
+    lex.whitespace_split = True
+    out, cur = [], []
+    for tok in lex:
+        if tok in ("|", ";", "&&", "||"):
+            out.append(" ".join(cur)); cur = []
+        else:
+            cur.append(tok)
+    return out + [" ".join(cur)]
+
+
 def safe_pipeline(cmd, allow_cmd):
     """Allowed commands joined by |, ;, && or ||, plus output filters (echo, tail, head, grep, wc).
     Redirection, subshells and anything else still go to Claude."""
     cmd = cmd.replace(" 2>&1", "")
     if re.search(r"[`$<>\n]", cmd):
         return False
-    parts = [p.strip() for p in re.split(r"\|\||&&|[|;]", cmd)]
+    try:
+        parts = segments(cmd)
+    except ValueError:  # unbalanced quotes
+        return False
     return all(p and any(re.fullmatch(r, p) for r in GIT_READ + allow_cmd + SAFE_FILTERS) for p in parts)
 
 
@@ -56,6 +73,8 @@ def dangerous(cmd):
             return True
         if prog == "git" and DANGER_GIT & set(words[1:]):
             return True
+        if prog == "go" and any(w.split("=")[0] in ("-exec", "-toolexec") for w in words[1:]):
+            return True  # runs an arbitrary program
     return False
 
 
