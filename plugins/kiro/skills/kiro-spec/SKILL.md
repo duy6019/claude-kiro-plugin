@@ -166,7 +166,7 @@ Kiro's bugfix workflow uses a fixed order, standalone test tasks, no `*` markers
 
 1. Run `python3 <this skill's base directory>/check_spec.py <repo>/.kiro/specs/<name>` and fix every error it reports. This full run is mandatory, even when the hook stayed quiet. A PostToolUse hook in the plugin also checks each spec file right after it is written and returns any errors; the file is already on disk then, so fix it before moving on. Warnings are judgment calls; mention them to the user.
 2. Tell the user the spec can be run from Kiro by opening `tasks.md` and clicking "Start task", or with `#spec:<name> implement task 1.1` in chat.
-3. Do not run `kiro-cli` to implement the spec unless the user asks.
+3. Do not run `kiro-cli` to implement the spec unless the user asks; `/kiro:run <repo> <spec>` does it task by task with scoped permissions.
 
 ## Do not
 
