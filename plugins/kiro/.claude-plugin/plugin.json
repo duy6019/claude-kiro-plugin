@@ -1,6 +1,6 @@
 {
   "name": "kiro",
-  "version": "0.5.3",
+  "version": "0.6.0",
   "description": "Ask kiro-cli, cross-review a diff with it, and write Kiro specs.",
   "author": {
     "name": "duy6019"

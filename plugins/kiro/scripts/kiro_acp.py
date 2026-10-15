@@ -10,12 +10,15 @@ Kiro asks before every write and shell command (reads are free). Each request ge
   reject writes outside --cwd, git that changes history or remotes, recursive/forced rm, sudo, network and deploy tools
   ask    create over a file with uncommitted changes, and any other command: written to <queue>/req-<n>.json;
          the runner waits for <queue>/resp-<n>.json ({"allow": true|false, "reason": "..."}) and rejects after --ask-timeout
+With --sandbox (auto: on when bwrap can start) Kiro runs in kiro_sandbox.sh: read-only filesystem except --cwd,
+no credentials, no user sockets. Every other command is then allowed and flagged; database clients are still asked.
 Only allow_once is ever sent: Kiro applies allow_always to the whole tool for the rest of the session.
 <queue>/done.json holds the session id, stop reason (or error), tool calls, decisions and Kiro's final text.
 """
 import argparse
 import fnmatch
 import json
+import os
 import re
 import shlex
 import subprocess
@@ -29,6 +32,7 @@ GIT_READ = [r"git status( --short)?", r"git diff( --stat| --name-only)?( HEAD)?(
 DANGER_BIN = {"sudo", "curl", "wget", "scp", "ssh", "nc", "glab", "gh", "kubectl", "terraform", "docker", "helm"}
 DANGER_GIT = {"push", "commit", "reset", "checkout", "restore", "clean", "rebase", "stash", "merge", "cherry-pick",
               "tag", "am", "apply", "worktree"}
+DB_CLIENTS = {"psql", "mysql", "redis-cli", "mongosh", "mongo", "clickhouse", "clickhouse-client", "sqlcmd", "cqlsh"}
 SAFE_FILTERS = [r"echo( [^;&|`$<>]*)?", r"(tail|head)( -n ?[0-9]+| -[0-9]+)?", r"grep( -[A-Za-z]+)* \S+", r"wc( -[lwc])?"]
 
 
@@ -58,15 +62,23 @@ def safe_pipeline(cmd, allow_cmd):
     return all(p and any(re.fullmatch(r, p) for r in GIT_READ + allow_cmd + SAFE_FILTERS) for p in parts)
 
 
-def dangerous(cmd):
-    """True when any command in the line runs a dangerous program (checked at command position, not in paths)."""
+def commands_in(cmd):
+    """Word lists of every command in the line (checked at command position, not inside paths)."""
     for seg in re.split(r"[;&|()`\n]+|\$\(", cmd):
         words = seg.split()
         while words and re.match(r"^\w+=", words[0]):  # VAR=value prefixes
             words.pop(0)
-        if not words:
-            continue
-        prog = Path(words[0]).name
+        if words:
+            yield Path(words[0]).name, words
+
+
+def uses_database(cmd):
+    return any(prog in DB_CLIENTS for prog, _ in commands_in(cmd))
+
+
+def dangerous(cmd):
+    """True when any command in the line changes history or remotes, force-deletes, escalates or reaches the network."""
+    for prog, words in commands_in(cmd):
         if prog in DANGER_BIN:
             return True
         if prog == "rm" and any(re.match(r"^-\w*[rRf]", w) or w in ("--recursive", "--force") for w in words[1:]):
@@ -88,11 +100,12 @@ def in_scope(p, cwd, scope):
     return False
 
 
-def classify(raw, cwd, scope, allow_cmd, dirty=frozenset()):
+def classify(raw, cwd, scope, allow_cmd, dirty=frozenset(), sandbox=False):
     """Return (tier, reason) for a permission request's rawInput.
 
     Writes inside cwd are allowed: git can restore committed content, and Claude reviews them after the task.
-    "flag" marks an allowed write Claude should look at. Only overwriting uncommitted work is asked about.
+    "flag" marks an allowed action Claude should look at. Only overwriting uncommitted work is asked about.
+    In the sandbox other commands are allowed and flagged, since they cannot write outside cwd or use credentials.
     """
     path, cmd = raw.get("path"), raw.get("command", "")
     if path:  # write tool: command is create / strReplace / insert / append
@@ -109,10 +122,26 @@ def classify(raw, cwd, scope, allow_cmd, dirty=frozenset()):
     if cmd:
         if dangerous(cmd):
             return "reject", "command changes history, deletes, escalates or reaches the network"
+        if uses_database(cmd):
+            return "ask", "database client"
         if safe_pipeline(cmd, allow_cmd):
             return "allow", "allowed command"
+        if sandbox:
+            return "flag", "command allowed inside the sandbox"
         return "ask", "command not in the allow list"
     return "ask", "tool other than write or shell"
+
+
+SANDBOX_SH = Path(__file__).with_name("kiro_sandbox.sh")
+
+
+def sandbox_works():
+    """bwrap can start here (it fails inside some other sandboxes, where nested user namespaces are not allowed)."""
+    try:
+        return subprocess.run(["bwrap", "--ro-bind", "/", "/", "--dev", "/dev", "--proc", "/proc", "true"],
+                              capture_output=True, timeout=20).returncode == 0
+    except (OSError, subprocess.TimeoutExpired):
+        return False
 
 
 def dirty_files(cwd):
@@ -168,19 +197,31 @@ def main():
     ap.add_argument("--prompt-file", required=True); ap.add_argument("--load")
     ap.add_argument("--scope", nargs="*", default=[]); ap.add_argument("--allow-cmd", nargs="*", default=[])
     ap.add_argument("--ask-timeout", type=int, default=1200)
+    ap.add_argument("--sandbox", choices=["auto", "on", "off"], default="auto")
     a = ap.parse_args()
     cwd, queue = Path(a.cwd).resolve(), Path(a.queue)
     queue.mkdir(parents=True, exist_ok=True)
     dirty = dirty_files(cwd)
-    proc = subprocess.Popen(["kiro-cli", "acp"], cwd=cwd, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
-                            stderr=subprocess.DEVNULL, text=True, bufsize=1)
+    sandbox = a.sandbox != "off" and sandbox_works()
+    if a.sandbox == "on" and not sandbox:
+        sys.exit("--sandbox on, but bwrap cannot start here (for example inside another sandbox)")
+    if not sandbox:
+        print("sandbox: off, using permission tiers only", flush=True)
+    pipes = {"cwd": cwd, "stdin": subprocess.PIPE, "stdout": subprocess.PIPE, "stderr": subprocess.DEVNULL,
+             "text": True, "bufsize": 1}
+    if sandbox:
+        proc = subprocess.Popen(["bash", "-c", 'exec bash "$KIRO_SANDBOX_SH"'],
+                                env={**os.environ, "KIRO_SANDBOX_SH": str(SANDBOX_SH)}, **pipes)
+    else:
+        proc = subprocess.Popen(["kiro-cli", "acp"], **pipes)
     lock, pending, nid, asked = threading.Lock(), {}, [0], [0]
     calls, decisions, chunks, read, inputs = [], [], [], set(), {}
 
     def finish(done, code):
+        done["sandbox"] = sandbox
         (queue / "done.json").write_text(json.dumps(done, indent=2))
         proc.terminate()
-        print(f"session={done.get('session')} stop={done.get('stopReason')} error={done.get('error')} "
+        print(f"session={done.get('session')} sandbox={sandbox} stop={done.get('stopReason')} error={done.get('error')} "
               f"calls={len(calls)} failed={sum(c['status'] == 'failed' for c in calls)}")
         for d in decisions:
             print(f"{d['decision']:6} {d['target']}  ({d['reason']})")
@@ -193,7 +234,7 @@ def main():
 
     def permission(msg):
         raw = msg["params"]["toolCall"].get("rawInput") or {}
-        tier, reason = classify(raw, cwd, a.scope, a.allow_cmd, dirty)
+        tier, reason = classify(raw, cwd, a.scope, a.allow_cmd, dirty, sandbox)
         target = raw.get("path") or raw.get("command") or msg["params"]["toolCall"].get("title")
         if tier == "ask":
             with lock:

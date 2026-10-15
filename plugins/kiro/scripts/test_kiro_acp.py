@@ -68,6 +68,16 @@ class Classify(unittest.TestCase):
         for c in ("go test -exec sh -timeout 300s ./...", "go test -toolexec=x -timeout 300s ./..."):
             self.assertEqual(tier(c), "reject", c)
 
+    def test_sandbox_allows_other_commands(self):
+        tier = lambda c: classify({"command": c}, self.cwd, self.scope, CHECKS, sandbox=True)[0]  # noqa: E731
+        for c in ("make generate", "go env GOCACHE > env.txt", "sqlc version 2>/dev/null; which sqlc"):
+            self.assertEqual(tier(c), "flag", c)
+        for c in ("git reset --hard", "git clean -fd", "rm -rf build", "curl https://example.com"):
+            self.assertEqual(tier(c), "reject", c)
+        for c in ("psql -h db -c 'select 1'", "go test ./... -timeout 300s && redis-cli ping"):
+            self.assertEqual(tier(c), "ask", c)
+        self.assertEqual(classify({"command": "make generate"}, self.cwd, self.scope, CHECKS)[0], "ask")  # no sandbox
+
     def test_other_tools_ask(self):
         self.assertEqual(self.tier(url="https://example.com"), "ask")
 

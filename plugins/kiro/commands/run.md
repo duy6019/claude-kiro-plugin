@@ -29,7 +29,7 @@ Scripts: `R="${CLAUDE_PLUGIN_ROOT}/scripts/kiro_acp.py"`, `C="${CLAUDE_PLUGIN_RO
 9. **Run** with the Bash tool's `run_in_background`:
    `python3 $R --cwd <dir> --queue <work>/t<N> --prompt-file <work>/t<N>/prompt.txt --scope <paths> --allow-cmd <regexes> [--load <session>] > <work>/t<N>/runner.out 2>&1`
    From task 2 on, pass `--load` with the session id from the previous `done.json`, so Kiro keeps what it already read.
-10. **Answer what the runner hands you.** It allows writes inside `<dir>` (flagging those outside the predicted scope or overwriting a committed file), read-only git and the check commands, also when piped or chained with `echo`, `tail`, `head`, `grep` or `wc`; it rejects writes outside `<dir>`, history-changing or remote git, recursive or forced deletes, sudo and network tools. It asks you about overwriting uncommitted work and about any other command.
+10. **Answer what the runner hands you.** It allows writes inside `<dir>` (flagging those outside the predicted scope or overwriting a committed file), read-only git and the check commands, also when piped or chained with `echo`, `tail`, `head`, `grep` or `wc`; it rejects writes outside `<dir>`, history-changing or remote git, recursive or forced deletes, sudo and network tools. It asks you about overwriting uncommitted work, database clients, and any other command. By default Kiro runs in a bubblewrap sandbox (read-only filesystem except `<dir>`, no credentials, no user sockets); there every other command is allowed and flagged instead of asked. The runner prints `sandbox: off` when bwrap cannot start (for example inside another sandbox); mention that in the task line.
     - Start a `Monitor` with exactly `python3 $R --watch <work>/t<N>` (timeout 30 minutes). It prints `ASK <n>: reason | target | read_before | purpose` for each request waiting for you and ends with `DONE` or `ERROR`. Re-arm it if it expires first. `ERROR`, or a runner that exits without `done.json`, is a failed task. Unanswered requests are rejected after `--ask-timeout` (20 minutes by default).
     - Answer with `<work>/t<N>/resp-<n>.json`: `{"allow": true|false, "reason": "<one line>"}`. Decide like this:
       1. Judge against the task and the spec (requirement clauses, `design.md`) and Kiro's stated purpose, not your own preference. If the task needs the change, allow it, even when it breaks existing code or tests; fixing those belongs to the same task.
@@ -39,7 +39,7 @@ Scripts: `R="${CLAUDE_PLUGIN_ROOT}/scripts/kiro_acp.py"`, `C="${CLAUDE_PLUGIN_RO
     - Allowed check commands run test code that Kiro wrote; that is another reason to work in a worktree.
 11. **Light check** when the run ends (the runner prints calls, decisions and Kiro's final text):
     - Read Kiro's closing lines (what it skipped, the risks).
-    - Look at every `flag` decision: is the extra file or the overwrite justified by the task?
+    - Look at every `flag` decision: is the extra file, the overwrite or the command justified by the task?
     - `git -C <dir> diff`: grep removed lines for deleted test functions or cases (`func Test`, `def test_`, `it(`, `test(`).
     - Run the repo's check commands on the changed parts.
     - Anything wrong: run again with `--load` and a prompt naming the specific problem. At most two fix rounds, then stop and report.
