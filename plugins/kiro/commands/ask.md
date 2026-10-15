@@ -1,7 +1,6 @@
 ---
-description: Ask kiro-cli a question without letting it change anything
+description: Ask kiro-cli a question without letting it change anything. Use when the user asks to consult Kiro.
 argument-hint: '[--read] <question>'
-disable-model-invocation: true
 allowed-tools: Bash(kiro-cli:*), AskUserQuestion
 ---
 

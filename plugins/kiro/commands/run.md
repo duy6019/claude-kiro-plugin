@@ -1,7 +1,6 @@
 ---
-description: Implement a Kiro spec with Kiro over ACP, one top-level task at a time; Claude answers Kiro's permission requests, checks lightly after each task and reviews in depth at checkpoints
+description: Implement a Kiro spec with Kiro over ACP, one top-level task at a time; Claude answers Kiro's permission requests, checks lightly after each task and reviews in depth at checkpoints. Use only when the user asks Kiro to implement a spec or to run /kiro:run.
 argument-hint: '<working dir> <spec name> [task numbers]'
-disable-model-invocation: true
 allowed-tools: Read, Write, Bash(mkdir -p:*), Bash(cp -r:*), Bash(git:*), Bash(python3:*), Monitor, AskUserQuestion
 ---
 

@@ -1,7 +1,6 @@
 ---
-description: Ask Kiro to cross-review a git diff (read-only)
+description: Ask Kiro to cross-review a git diff (read-only). Use when the user asks for a Kiro review or second opinion.
 argument-hint: '<repo path> [--base <ref>]'
-disable-model-invocation: true
 allowed-tools: Read, Bash(cd:*), Bash(git:*), Bash(mktemp:*), Bash(kiro-cli:*), AskUserQuestion
 ---
 
