@@ -16,7 +16,7 @@ Writes specs only, never source code. The rules below come from the prompts bund
 2. Apply the workspace `CLAUDE.md`: show `git -C <repo> branch --show-current`, `status --short`, `worktree list`, then ask which checkout to write into.
 3. Read the code the spec touches. Cite `path:line` for claims about current behaviour; label inference as inference.
 4. Ask once: feature or bugfix; requirements-first (behaviour known, design flexible) or design-first (design or non-functional limits fixed). The choice cannot be changed later in Kiro.
-5. Ask which language the prose should use. Existing specs differ (sensor: English; data-collection: English requirements, Vietnamese design and tasks). Code and identifiers stay English.
+5. Ask which language the prose should use. Existing specs differ (sensor: English; data-collection: English requirements, Vietnamese design and tasks). Code and identifiers stay English. EARS keywords (THE, WHEN, IF, THEN, SHALL, SHALL CONTINUE TO), clause numbering and the required section headings stay English in every language; only free text may be Vietnamese.
 6. Pick a kebab-case name, e.g. `decrypt-driver-name-failure`.
 
 ## Files in `<repo>/.kiro/specs/<name>/`
@@ -30,6 +30,7 @@ Writes specs only, never source code. The rules below come from the prompts bund
 | `tasks.meta.json` | written by Kiro (execution history). Never create or edit it. |
 
 Write one file at a time. After each, stop and wait for the user's approval. The user is the source of truth; revise on feedback before moving on.
+Write spec files only with the Write or Edit tools, never through Bash (heredoc, `sed`): the plugin's structure check runs on those tools only.
 
 ## requirements.md (feature)
 
@@ -163,7 +164,7 @@ Kiro's bugfix workflow uses a fixed order, standalone test tasks, no `*` markers
 
 ## After writing
 
-1. Run `python3 <this skill's base directory>/check_spec.py <repo>/.kiro/specs/<name>` and fix every error it reports.
+1. Run `python3 <this skill's base directory>/check_spec.py <repo>/.kiro/specs/<name>` and fix every error it reports. This full run is mandatory, even when the hook stayed quiet. A PostToolUse hook in the plugin also checks each spec file right after it is written and returns any errors; the file is already on disk then, so fix it before moving on. Warnings are judgment calls; mention them to the user.
 2. Tell the user the spec can be run from Kiro by opening `tasks.md` and clicking "Start task", or with `#spec:<name> implement task 1.1` in chat.
 3. Do not run `kiro-cli` to implement the spec unless the user asks.
 

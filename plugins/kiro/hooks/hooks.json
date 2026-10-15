@@ -1,0 +1,17 @@
+{
+  "description": "After each Write/Edit of a Kiro spec file, return structure errors to Claude so it fixes them.",
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "Write|Edit|MultiEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/skills/kiro-spec/check_spec.py\" --hook",
+            "timeout": 10
+          }
+        ]
+      }
+    ]
+  }
+}
