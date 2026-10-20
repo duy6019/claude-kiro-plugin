@@ -108,6 +108,10 @@ def classify(raw, cwd, scope, allow_cmd, dirty=frozenset(), sandbox=False):
     In the sandbox other commands are allowed and flagged, since they cannot write outside cwd or use credentials.
     """
     path, cmd = raw.get("path"), raw.get("command", "")
+    if "operations" in raw:  # read tool: Kiro asks only for files outside its workspace
+        if sandbox:
+            return "allow", "read (credentials are hidden in the sandbox)"
+        return "ask", "read outside the working directory"
     if path:  # write tool: command is create / strReplace / insert / append
         p = (cwd / path).resolve()  # absolute paths stay as they are
         if not p.is_relative_to(cwd):

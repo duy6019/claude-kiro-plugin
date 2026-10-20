@@ -77,6 +77,9 @@ class Classify(unittest.TestCase):
         for c in ("psql -h db -c 'select 1'", "go test ./... -timeout 300s && redis-cli ping"):
             self.assertEqual(tier(c), "ask", c)
         self.assertEqual(classify({"command": "make generate"}, self.cwd, self.scope, CHECKS)[0], "ask")  # no sandbox
+        read = {"operations": [{"mode": "Line", "path": "/opt/plugin/FORMAT.md"}]}
+        self.assertEqual(classify(read, self.cwd, self.scope, CHECKS, sandbox=True)[0], "allow")
+        self.assertEqual(classify(read, self.cwd, self.scope, CHECKS)[0], "ask")
 
     def test_other_tools_ask(self):
         self.assertEqual(self.tier(url="https://example.com"), "ask")

@@ -36,7 +36,9 @@ TASKS = """# Implementation Plan: a
 - [ ] 1. Build
   - [ ] 1.1 Code
     - _Requirements: 1.1, 1.2_
-  - [ ]* 1.2 Property test
+  - [ ] 1.2 Write unit tests for Code
+    - _Requirements: 1.1_
+  - [ ]* 1.3 Property test
     - **Property 1: p**
     - **Validates: Requirements 1.1**
 - [ ] 2. Checkpoint - Ensure all tests pass
@@ -44,7 +46,7 @@ TASKS = """# Implementation Plan: a
 
 ## Task Dependency Graph
 ```json
-{"waves": [{"id": 0, "tasks": ["1.1"]}, {"id": 1, "tasks": ["1.2"]}]}
+{"waves": [{"id": 0, "tasks": ["1.1"]}, {"id": 1, "tasks": ["1.2"]}, {"id": 2, "tasks": ["1.3"]}]}
 ```
 """
 BUGFIX = """# Bugfix Requirements Document
@@ -117,6 +119,12 @@ class CheckSpec(unittest.TestCase):
         for want in ("not an EARS criterion", "no '**User Story:**'", "missing section 'Data Models'",
                      "must not carry '*'", "unknown requirement 9.9"):
             self.assertIn(want, errs)
+
+    def test_unit_tests_required(self):
+        only_optional = TASKS.replace("- [ ] 1.2 Write unit tests", "- [ ]* 1.2 Write unit tests")
+        errs, warns = check(spec(self.tmp, "feature", requirements_md=REQ, design_md=DESIGN, tasks_md=only_optional))
+        self.assertIn("no required unit test task", "\n".join(errs))
+        self.assertIn("task 1: no required unit test sub-task", "\n".join(warns))
 
     def test_bugfix_errors(self):
         errs = "\n".join(check(spec(self.tmp, "bugfix", bugfix_md=BUGFIX.replace("SHALL CONTINUE TO", "SHALL"),

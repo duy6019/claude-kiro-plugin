@@ -195,6 +195,22 @@ def check_tasks(text, spec_type, ids, full, errs, warns):
         for r in sorted(ids - cited):
             warns.append(f"requirement {r} is not cited by any task")
 
+    def checkpoint(t):
+        return t["title"].lower().startswith(("checkpoint", "final checkpoint"))
+
+    def required_test(t):
+        return "test" in t["title"].lower() and not t["opt"] and not checkpoint(t)
+
+    if not any(required_test(t) for t in tasks):
+        errs.append("tasks.md: no required unit test task; every spec needs unit tests that are not marked [ ]*")
+    if spec_type == "feature":
+        for t in tasks:
+            if "." in t["id"] or checkpoint(t):
+                continue
+            subs = [s for s in tasks if s["id"].startswith(t["id"] + ".")]
+            if subs and not any(required_test(s) for s in subs):
+                warns.append(f"tasks.md task {t['id']}: no required unit test sub-task")
+
     top = [t for t in tasks if "." not in t["id"]]
     if spec_type == "bugfix":
         need = [("1", "**Property 1: Bug Condition**"), ("2", "**Property 2: Preservation**")]
