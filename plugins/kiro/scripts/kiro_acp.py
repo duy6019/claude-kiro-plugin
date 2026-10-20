@@ -100,7 +100,7 @@ def in_scope(p, cwd, scope):
     return False
 
 
-def classify(raw, cwd, scope, allow_cmd, dirty=frozenset(), sandbox=False):
+def classify(raw, cwd, scope, allow_cmd, dirty=frozenset(), sandbox=False, saved=False, own=frozenset()):
     """Return (tier, reason) for a permission request's rawInput.
 
     Writes inside cwd are allowed: git can restore committed content, and Claude reviews them after the task.
@@ -117,7 +117,11 @@ def classify(raw, cwd, scope, allow_cmd, dirty=frozenset(), sandbox=False):
         if not p.is_relative_to(cwd):
             return "reject", "write outside the working directory"
         if cmd == "create" and p.exists():
+            if str(p) in own:
+                return "flag", "create overwrites a file Kiro wrote in this run"
             if str(p) in dirty:
+                if saved:
+                    return "flag", "create overwrites uncommitted changes (saved in snapshot.patch)"
                 return "ask", "create would overwrite uncommitted changes"
             return "flag", "create overwrites a committed file (recoverable from git)"
         if in_scope(p, cwd, scope):
@@ -164,6 +168,49 @@ def dirty_files(cwd):
     return paths
 
 
+def snapshot(cwd, out):
+    """Save every uncommitted change (untracked files too) as a patch, using a temporary index so the
+    real index and working tree are untouched. Returns True when the patch was written."""
+    env = {**os.environ, "GIT_INDEX_FILE": str(out.with_suffix(".index"))}
+    try:
+        subprocess.run(["git", "read-tree", "HEAD"], cwd=cwd, env=env, check=True, capture_output=True)
+        subprocess.run(["git", "add", "-A"], cwd=cwd, env=env, check=True, capture_output=True)
+        diff = subprocess.run(["git", "diff", "--cached", "--binary", "HEAD"], cwd=cwd, env=env, check=True,
+                              capture_output=True).stdout
+    except (OSError, subprocess.CalledProcessError):
+        return False
+    out.write_bytes(diff)
+    return True
+
+
+def rule_matches(rules, raw, cwd):
+    """Rules Claude asked to remember: "write:<glob relative to cwd>" or "cmd:<full-match regex>"."""
+    for r in rules:
+        kind, _, pat = r.partition(":")
+        if kind == "write" and raw.get("path") and fnmatch.fnmatch(str((cwd / raw["path"]).resolve()), str(cwd / pat)):
+            return r
+        if kind == "cmd" and raw.get("command") and not raw.get("path") and re.fullmatch(pat, raw["command"]):
+            return r
+    return None
+
+
+def next_event(queue, timeout):
+    """For a polling driver: wait for the next unanswered request or the end of the run, print it, exit."""
+    queue, tick, deadline = Path(queue), threading.Event(), time.time() + timeout
+    while time.time() < deadline:
+        for req in sorted(queue.glob("req-*.json"), key=lambda p: int(p.stem.split("-")[1])):
+            if not (queue / req.name.replace("req-", "resp-")).exists():
+                print(req.read_text())
+                return
+        done = queue / "done.json"
+        if done.exists():
+            d = json.loads(done.read_text())
+            print(f"ERROR {d['error']}" if d.get("error") else f"DONE session={d['session']}")
+            return
+        tick.wait(1)
+    print("RUNNING")
+
+
 def paths_in(obj):
     if isinstance(obj, dict):
         for k, v in obj.items():
@@ -196,6 +243,8 @@ def watch(queue):
 def main():
     if sys.argv[1:2] == ["--watch"]:
         return watch(sys.argv[2])
+    if sys.argv[1:2] == ["--next"]:
+        return next_event(sys.argv[2], int(sys.argv[3]) if len(sys.argv) > 3 else 540)
     ap = argparse.ArgumentParser()
     ap.add_argument("--cwd", required=True); ap.add_argument("--queue", required=True)
     ap.add_argument("--prompt-file", required=True); ap.add_argument("--load")
@@ -203,9 +252,12 @@ def main():
     ap.add_argument("--ask-timeout", type=int, default=1200)
     ap.add_argument("--sandbox", choices=["auto", "on", "off"], default="auto")
     a = ap.parse_args()
-    cwd, queue = Path(a.cwd).resolve(), Path(a.queue)
+    cwd, queue = Path(a.cwd).resolve(), Path(a.queue).resolve()
     queue.mkdir(parents=True, exist_ok=True)
     dirty = dirty_files(cwd)
+    saved = bool(dirty) and snapshot(cwd, queue / "snapshot.patch")
+    if dirty and not saved:
+        print("snapshot: failed, overwriting uncommitted changes will be asked", flush=True)
     sandbox = a.sandbox != "off" and sandbox_works()
     if a.sandbox == "on" and not sandbox:
         sys.exit("--sandbox on, but bwrap cannot start here (for example inside another sandbox)")
@@ -219,10 +271,12 @@ def main():
     else:
         proc = subprocess.Popen(["kiro-cli", "acp"], **pipes)
     lock, pending, nid, asked = threading.Lock(), {}, [0], [0]
-    calls, decisions, chunks, read, inputs = [], [], [], set(), {}
+    calls, decisions, chunks, read, inputs, own, rules = [], [], [], set(), {}, set(), []
 
     def finish(done, code):
         done["sandbox"] = sandbox
+        done["snapshot"] = str(queue / "snapshot.patch") if saved else None
+        done["rules"] = rules
         (queue / "done.json").write_text(json.dumps(done, indent=2))
         proc.terminate()
         print(f"session={done.get('session')} sandbox={sandbox} stop={done.get('stopReason')} error={done.get('error')} "
@@ -238,8 +292,11 @@ def main():
 
     def permission(msg):
         raw = msg["params"]["toolCall"].get("rawInput") or {}
-        tier, reason = classify(raw, cwd, a.scope, a.allow_cmd, dirty, sandbox)
+        tier, reason = classify(raw, cwd, a.scope, a.allow_cmd, dirty, sandbox, saved, own)
         target = raw.get("path") or raw.get("command") or msg["params"]["toolCall"].get("title")
+        rule = rule_matches(rules, raw, cwd) if tier == "ask" else None
+        if rule:
+            tier, reason = "flag", f"remembered rule {rule}"
         if tier == "ask":
             with lock:
                 asked[0] += 1; n = asked[0]
@@ -254,6 +311,9 @@ def main():
             if resp.exists():
                 r = json.loads(resp.read_text())
                 tier, reason = ("allow" if r.get("allow") else "reject"), "decided: " + r.get("reason", "")
+                remember = r.get("remember") or []
+                if r.get("allow"):
+                    rules.extend([remember] if isinstance(remember, str) else remember)
             else:
                 tier, reason = "reject", f"no decision within {a.ask_timeout}s"
         decisions.append({"target": target, "decision": tier, "reason": reason, "purpose": raw.get("__tool_use_purpose")})
@@ -282,7 +342,7 @@ def main():
                 if u["status"] == "completed" and not raw.get("command"):
                     read.update(str((cwd / p).resolve()) for p in paths_in(raw))
                 elif u["status"] == "completed" and raw.get("path"):
-                    dirty.add(str((cwd / raw["path"]).resolve()))  # Kiro's own uncommitted work now
+                    own.add(str((cwd / raw["path"]).resolve()))
                 calls.append({"status": u["status"], "target": raw.get("path") or raw.get("command") or u.get("title")})
 
     def reader():

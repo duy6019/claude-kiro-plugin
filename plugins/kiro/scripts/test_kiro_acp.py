@@ -10,7 +10,7 @@ import unittest
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
-from kiro_acp import classify, dirty_files, watch  # noqa: E402
+from kiro_acp import classify, dirty_files, next_event, rule_matches, snapshot, watch  # noqa: E402
 
 CHECKS = [r"go test \./[\w./-]* -timeout 300s", r"npm test"]
 
@@ -93,6 +93,54 @@ class Classify(unittest.TestCase):
         with contextlib.redirect_stdout(out):
             watch(q)
         self.assertEqual(out.getvalue().splitlines(), ["ASK 1: r | t | read_before=None | p", "DONE session=s1"])
+
+    def test_overwrite_tiers_with_snapshot_and_own_writes(self):
+        x = str(self.cwd / "pkg/x/x.go")
+        raw = {"path": x, "command": "create"}
+        self.assertEqual(classify(raw, self.cwd, self.scope, CHECKS, dirty={x})[0], "ask")
+        self.assertEqual(classify(raw, self.cwd, self.scope, CHECKS, dirty={x}, saved=True)[0], "flag")
+        self.assertEqual(classify(raw, self.cwd, self.scope, CHECKS, own={x})[0], "flag")
+
+    def test_remembered_rules(self):
+        rules = ["write:modules/offtrip/**", r"cmd:make (gen|lint)"]
+        self.assertTrue(rule_matches(rules, {"path": "modules/offtrip/a/b.go", "command": "create"}, self.cwd))
+        self.assertFalse(rule_matches(rules, {"path": "modules/other/b.go", "command": "create"}, self.cwd))
+        self.assertTrue(rule_matches(rules, {"command": "make gen"}, self.cwd))
+        self.assertFalse(rule_matches(rules, {"command": "make gen; rm x"}, self.cwd))
+
+    def test_snapshot_keeps_untracked_and_leaves_index_alone(self):
+        repo = self.cwd
+        subprocess.run(["git", "init", "-q"], cwd=repo, check=True)
+        subprocess.run(["git", "add", "-A"], cwd=repo, check=True)
+        subprocess.run(["git", "-c", "core.hooksPath=/dev/null", "-c", "user.name=t", "-c", "user.email=t@example.invalid",
+                        "commit", "-qm", "init"], cwd=repo, check=True)
+        (repo / "pkg/x/x.go").write_text("package x\n// changed\n")
+        (repo / "pkg/x/new.go").write_text("package x\n// new\n")
+        out = repo / "q" / "snapshot.patch"
+        out.parent.mkdir()
+        self.assertTrue(snapshot(repo, out))
+        patch = out.read_text()
+        self.assertIn("// changed", patch)
+        self.assertIn("// new", patch)
+        staged = subprocess.run(["git", "diff", "--cached", "--name-only"], cwd=repo, capture_output=True, text=True).stdout
+        self.assertEqual(staged, "")  # the real index is untouched
+
+    def test_next_event(self):
+        q = self.cwd / "q"
+        q.mkdir()
+        (q / "req-1.json").write_text('{"n": 1}')
+        (q / "resp-1.json").write_text('{"allow": true}')
+        (q / "req-2.json").write_text('{"n": 2}')
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            next_event(q, 2)
+        self.assertEqual(out.getvalue().strip(), '{"n": 2}')
+        (q / "resp-2.json").write_text('{"allow": true}')
+        (q / "done.json").write_text('{"session": "s"}')
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            next_event(q, 2)
+        self.assertEqual(out.getvalue().strip(), "DONE session=s")
 
     def test_dirty_files(self):
         repo = self.cwd
