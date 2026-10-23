@@ -251,6 +251,8 @@ def main():
     ap.add_argument("--scope", nargs="*", default=[]); ap.add_argument("--allow-cmd", nargs="*", default=[])
     ap.add_argument("--ask-timeout", type=int, default=1200)
     ap.add_argument("--sandbox", choices=["auto", "on", "off"], default="auto")
+    ap.add_argument("--model", default="", help="Kiro model id (kiro-cli chat --list-models); empty = Kiro's default")
+    ap.add_argument("--effort", choices=["", "low", "medium", "high", "xhigh", "max"], default="")
     a = ap.parse_args()
     cwd, queue = Path(a.cwd).resolve(), Path(a.queue).resolve()
     queue.mkdir(parents=True, exist_ok=True)
@@ -265,21 +267,24 @@ def main():
         print("sandbox: off, using permission tiers only", flush=True)
     pipes = {"cwd": cwd, "stdin": subprocess.PIPE, "stdout": subprocess.PIPE, "stderr": subprocess.DEVNULL,
              "text": True, "bufsize": 1}
+    env = {**os.environ, "KIRO_SANDBOX_SH": str(SANDBOX_SH), "KIRO_MODEL": a.model, "KIRO_EFFORT": a.effort}
     if sandbox:
-        proc = subprocess.Popen(["bash", "-c", 'exec bash "$KIRO_SANDBOX_SH"'],
-                                env={**os.environ, "KIRO_SANDBOX_SH": str(SANDBOX_SH)}, **pipes)
+        proc = subprocess.Popen(["bash", "-c", 'exec bash "$KIRO_SANDBOX_SH"'], env=env, **pipes)
     else:
-        proc = subprocess.Popen(["kiro-cli", "acp"], **pipes)
+        proc = subprocess.Popen(["bash", "-c", 'exec kiro-cli acp ${KIRO_MODEL:+--model "$KIRO_MODEL"} '
+                                 '${KIRO_EFFORT:+--effort "$KIRO_EFFORT"}'], env=env, **pipes)
     lock, pending, nid, asked = threading.Lock(), {}, [0], [0]
     calls, decisions, chunks, read, inputs, own, rules = [], [], [], set(), {}, set(), []
+    used_model = [a.model or "default"]
 
     def finish(done, code):
         done["sandbox"] = sandbox
+        done["model"], done["effort"] = used_model[0], a.effort or "default"  # model as Kiro reported it
         done["snapshot"] = str(queue / "snapshot.patch") if saved else None
         done["rules"] = rules
         (queue / "done.json").write_text(json.dumps(done, indent=2))
         proc.terminate()
-        print(f"session={done.get('session')} sandbox={sandbox} stop={done.get('stopReason')} error={done.get('error')} "
+        print(f"session={done.get('session')} model={done['model']} effort={done['effort']} sandbox={sandbox} stop={done.get('stopReason')} error={done.get('error')} "
               f"calls={len(calls)} failed={sum(c['status'] == 'failed' for c in calls)}")
         for d in decisions:
             print(f"{d['decision']:6} {d['target']}  ({d['reason']})")
@@ -371,10 +376,12 @@ def main():
     threading.Thread(target=reader, daemon=True).start()
     call("initialize", {"protocolVersion": 1, "clientCapabilities": {"fs": {"readTextFile": False, "writeTextFile": False}, "terminal": False}})
     if a.load:
-        call("session/load", {"sessionId": a.load, "cwd": str(cwd), "mcpServers": []})
+        session = call("session/load", {"sessionId": a.load, "cwd": str(cwd), "mcpServers": []}) or {}
         sid = a.load
     else:
-        sid = call("session/new", {"cwd": str(cwd), "mcpServers": []})["sessionId"]
+        session = call("session/new", {"cwd": str(cwd), "mcpServers": []})
+        sid = session["sessionId"]
+    used_model[0] = (session.get("models") or {}).get("currentModelId") or a.model or "default"
     chunks.clear(); calls.clear()  # drop history replayed by session/load; files read earlier still count as read
     result = call("session/prompt", {"sessionId": sid, "prompt": [{"type": "text", "text": Path(a.prompt_file).read_text()}]})
     finish({"session": sid, "stopReason": result.get("stopReason"), "calls": calls, "decisions": decisions,

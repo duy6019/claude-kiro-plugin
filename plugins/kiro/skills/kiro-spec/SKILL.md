@@ -13,14 +13,15 @@ Paths: `R=<this skill's base directory>/../../scripts/kiro_acp.py`, `C=<this ski
 
 1. **Inputs.** The topic (a Jira key, MR or description) and the working directory `<dir>`. Choosing `<dir>` follows
    your normal workflow and the workspace `CLAUDE.md`. Ask once, together: feature or bugfix; requirements-first or
-   design-first (it cannot change later in Kiro); the prose language. Pick a kebab-case `<name>`.
+   design-first (it cannot change later in Kiro); the prose language; the Kiro model (from `kiro-cli chat --list-models`,
+   with credit multipliers; `auto` is Kiro's default) and effort (`low` … `max`). Pick a kebab-case `<name>`.
 2. **Prompt** in `<work>/spec/prompt.txt` (`<work>` = `reviews/_work/kiro-<name>/` in this workspace, else a temp dir):
    "Create a Kiro <feature | bugfix> spec named <name> in <dir>/.kiro/specs/<name>/ (<workflow>, prose in <language>)
    for: <topic, with the Jira/MR text you gathered>. Read <F> first and follow it exactly. Read the code the spec
    touches. Write .config.kiro, <requirements.md | bugfix.md>, design.md and tasks.md with your write tool. Do not
    change any other file. List open questions at the end of the requirements file instead of guessing."
 3. **Run** in the background: `python3 $R --cwd <dir> --queue <work>/spec --prompt-file <work>/spec/prompt.txt
-   --scope .kiro/specs/<name>`, with a `Monitor` on `python3 $R --watch <work>/spec`. Answer any request it hands you as
+   --scope .kiro/specs/<name> --model <model> --effort <effort>`, with a `Monitor` on `python3 $R --watch <work>/spec`. Answer any request it hands you as
    `/kiro:run` step 10 describes; writes outside the spec directory should not be needed, so reject them with that reason.
 4. **Gate** when it finishes:
    - `python3 $C <dir>/.kiro/specs/<name>`: every error goes back to Kiro (rerun with `--load <session>` and the error

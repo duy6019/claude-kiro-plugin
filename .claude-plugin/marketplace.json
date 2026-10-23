@@ -5,13 +5,13 @@
   },
   "metadata": {
     "description": "Use Kiro from Claude Code: read-only questions, cross-review, spec writing.",
-    "version": "0.9.0"
+    "version": "0.10.0"
   },
   "plugins": [
     {
       "name": "kiro",
       "description": "Ask kiro-cli, cross-review a diff with it, and write Kiro specs.",
-      "version": "0.9.0",
+      "version": "0.10.0",
       "author": {
         "name": "duy6019"
       },

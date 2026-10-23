@@ -34,5 +34,7 @@ env_args=(--clearenv --setenv HOME "$HOME" --setenv USER "${USER:-}" --setenv PA
           --setenv LANG "${LANG:-C.UTF-8}" --setenv TERM "${TERM:-dumb}" --setenv GOCACHE /tmp/go-build
           --setenv GOFLAGS "${GOFLAGS:-}" --setenv GOPRIVATE "${GOPRIVATE:-}" --setenv GONOSUMDB "${GONOSUMDB:-}")
 
-if [ $# -eq 0 ]; then set -- kiro-cli acp; fi
+if [ $# -eq 0 ]; then
+  set -- kiro-cli acp ${KIRO_MODEL:+--model "$KIRO_MODEL"} ${KIRO_EFFORT:+--effort "$KIRO_EFFORT"}
+fi
 exec bwrap "${args[@]}" "${env_args[@]}" "$@"
